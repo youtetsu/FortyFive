@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forty Five - 2人オンライン（単一HTML）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', sans-serif;
+      background: #0f172a; color: #e2e8f0;
+    }
+    h1, h2, h3 { margin: 0.2rem 0 0.8rem 0; }
+    a { color: #93c5fd; }
+    #app { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .header-right { opacity: 0.8; font-size: 12px; }
+    .card {
+      background: #111827; border: 1px solid #1f2937; border-radius: 16px; padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3); margin-bottom: 12px;
+    }
+    .hidden { display: none; }
+    .lobby-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .lobby-col label { display: block; font-size: 14px; margin: 8px 0; }
+    input, select, button {
+      padding: 10px 12px; border-radius: 12px; border: 1px solid #374151;
+      background: #0b1220; color: #e2e8f0; outline: none;
+    }
+    button { cursor: pointer; }
+    button.primary { background: #1d4ed8; border-color: #1d4ed8; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .hint, .muted { color: #94a3b8; font-size: 12px; }
+    .sep { margin: 0 8px; opacity: 0.5; }
+
+    .board { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 12px; }
+    .zone h3 { font-size: 16px; margin-bottom: 8px; }
+
+    .cards { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cards.single { min-height: 80px; }
+    .card-item {
+      width: 70px; height: 96px; border-radius: 12px; border: 1px solid #334155;
+      background: linear-gradient(180deg, #0b1324, #0b1020);
+      display: grid; place-items: center; font-weight: 700; position: relative;
+    }
+    .card-item.red { color: #fecaca; }
+    .card-item.black { color: #c7d2fe; }
+    .card-item.back {
+      background: repeating-linear-gradient(45deg, #0b1020, #0b1020 6px, #0d1328 6px, #0d1328 12px);
+    }
+    .card-item.selected { outline: 2px solid #38bdf8; }
+    .card-item .badge {
+      position: absolute; top: 4px; right: 4px; font-size: 10px; opacity: 0.8;
+      background: #0b1020; border: 1px solid #334155; border-radius: 8px; padding: 2px 6px;
+    }
+
+    .arena { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+    .mystery .cards .card-item { filter: brightness(0.9); }
+    .effect-note { margin-top: 6px; color: #fcd34d; min-height: 20px; }
+
+    .panel { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .actions .row { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
+    .hand .card-item { cursor: pointer; }
+
+    .log { max-height: 200px; overflow: auto; background: #0b1120; }
+    #logView > div { padding: 4px 0; border-bottom: 1px dashed #1f2937; font-size: 13px; }
+
+    .footer { display: flex; justify-content: space-between; align-items: center; }
+
+    @media (max-width: 900px) {
+      .lobby-grid { grid-template-columns: 1fr; }
+      .board { grid-template-columns: 1fr; }
+      .panel { grid-template-columns: 1fr; }
+      .card-item { width: 58px; height: 82px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1>Forty Five</h1>
+      <div class="header-right"><span id="playerIdTag"></span></div>
+    </header>
+
+    <section id="lobby" class="card">
+      <h2>ロビー</h2>
+      <div class="lobby-grid">
+        <div class="lobby-col">
+          <h3>部屋を作成</h3>
+          <label>あなたの名前
+            <input id="creatorName" placeholder="例: Alice" />
+          </label>
+          <button id="btnCreateRoom">部屋を作る</button>
+          <p class="hint">※ ルーム番号だけで参加できます。FirebaseのURL入力は不要（内部で固定）。</p>
+          <div id="createdRoomInfo" class="muted"></div>
+        </div>
+        <div class="lobby-col">
+          <h3>部屋に参加</h3>
+          <label>あなたの名前
+            <input id="joinerName" placeholder="例: Bob" />
+          </label>
+          <label>部屋番号（6桁）
+            <input id="roomCodeJoin" placeholder="例: 483920" />
+          </label>
+          <button id="btnJoinRoom">参加する</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="game" class="hidden">
+      <div class="topbar card">
+        <div>
+          <strong>部屋番号：</strong><span id="roomCodeLabel"></span>
+          <span class="sep"></span>
+          <strong>あなた：</strong><span id="youLabel"></span>
+          <span class="sep"></span>
+          <strong>相手：</strong><span id="oppoLabel"></span>
+        </div>
+        <div>
+          <strong>ターン：</strong><span id="turnLabel">-</span> / 9
+          <span class="sep"></span>
+          <strong>フェーズ：</strong><span id="phaseLabel">-</span>
+        </div>
+      </div>
+
+      <div class="board">
+        <div class="zone card">
+          <h3>自陣（あなたの得点）</h3>
+          <div id="yourHome" class="cards"></div>
+        </div>
+        <div class="zone card">
+          <h3>場</h3>
+          <div class="arena">
+            <div>
+              <div class="label">あなたの出札</div>
+              <div id="yourPlay" class="cards single"></div>
+            </div>
+            <div>
+              <div class="label">相手の出札</div>
+              <div id="oppoPlay" class="cards single"></div>
+            </div>
+          </div>
+          <div class="mystery">
+            <div class="label">ミステリーカード（裏2枚）</div>
+            <div id="mysteryArea" class="cards"></div>
+          </div>
+          <div id="effectNote" class="effect-note"></div>
+        </div>
+        <div class="zone card">
+          <h3>相手陣（相手の得点）</h3>
+          <div id="oppoHome" class="cards"></div>
+        </div>
+      </div>
+
+      <div class="panel card">
+        <div class="hand-panel">
+          <h3>手札</h3>
+          <div id="handArea" class="cards hand"></div>
+          <div id="mustPlayNote" class="muted"></div>
+        </div>
+        <div class="actions">
+          <div>
+            <button id="btnCommit" disabled>このカードで出す</button>
+            <button id="btnCancel" disabled>選択解除</button>
+          </div>
+          <div class="row">
+            <button id="btnSwapK" title="Kの効果：手札1枚とミステリー1枚を交換（Kを出したターンのみ）" disabled>K効果：交換</button>
+            <select id="swapHandSelect" disabled></select>
+            <select id="swapMysterySelect" disabled></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="log card">
+        <h3>ログ</h3>
+        <div id="logView"></div>
+      </div>
+
+      <div class="footer card">
+        <button id="btnLeave">退出</button>
+        <button id="btnRematch" class="primary" disabled>同じ部屋で再戦</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+  // ─────────────────────────────────────────────
+  // Forty Five - 2人オンライン（単一HTML / 外部JSなし）
+  // ・ルーム番号だけで入室（Firebase Realtime Database のURLは固定）
+  // ・ルールは「2,8,10,Q,K」×4=20枚 / 9ターン / 残り2枚はミステリー
+  // ・8/Kの同時はじゃんけんの代わりにランダム抽選
+  // ─────────────────────────────────────────────
+
+  // ★★★ ここを書き換えてください（あなたの Firebase Realtime Database の URL）★★★
+  const DB_BASE = "https://fortyfive-game-default-rtdb.asia-southeast1.firebasedatabase.app"; // 末尾スラッシュ無し
+
+  // ---------- Utilities ----------
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  function uuid(){
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random()*16|0, v = c == 'x' ? r : (r&0x3|0x8);
+      return v.toString(16);
+    });
+  }
+  function randint(n){ return Math.floor(Math.random()*n); }
+  function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+  // ---------- Firebase REST minimal ----------
+  async function dbGet(path){
+    const url = `${DB_BASE}${path}.json`;
+    const res = await fetch(url, { method: 'GET' });
+    return await res.json();
+  }
+  async function dbSet(path, value){
+    const url = `${DB_BASE}${path}.json`;
+    const res = await fetch(url, { method: 'PUT', body: JSON.stringify(value) });
+    return await res.json();
+  }
+  async function dbPatch(path, value){
+    const url = `${DB_BASE}${path}.json`;
+    const res = await fetch(url, { method: 'PATCH', body: JSON.stringify(value) });
+    return await res.json();
+  }
+
+  // ---------- Game constants ----------
+  const RANKS = ['2','8','10','Q','K'];
+  const SUITS = ['\u2660','\u2663','\u2665','\u2666']; // ♠, ♣, ♥, ♦
+  const RANK_VALUE = { '2': 2, '8': 8, '10': 10, 'Q': 12, 'K': 13 };
+  function cardColor(suit){ return (suit === '\u2665' || suit === '\u2666') ? 'red' : 'black'; }
+  function makeDeck(){
+    const deck = [];
+    for(const r of RANKS){ for(const s of SUITS){ deck.push({ r, s }); } }
+    return deck;
+  }
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+  function cardToText(c){ return `${c.s}${c.r}`; }
+
+  // ---------- App State ----------
+  let playerId = localStorage.getItem('ff_playerId') || uuid();
+  localStorage.setItem('ff_playerId', playerId);
+  $('#playerIdTag').textContent = `PlayerID: ${playerId.slice(0,8)}…`;
+
+  let roomCode = null;
+  let youKey = null; // 'A' or 'B'
+  let isHost = false;
+  let polling = false;
+  let pollAbort = false;
+
+  // ---------- UI State ----------
+  let selectedIndex = null; // index in hand
+  let cachedRoom = null;
+
+  // ---------- DOM refs ----------
+  const el = {
+    lobby: $('#lobby'), game: $('#game'), createdInfo: $('#createdRoomInfo'),
+    roomCodeLabel: $('#roomCodeLabel'), youLabel: $('#youLabel'), oppoLabel: $('#oppoLabel'),
+    turnLabel: $('#turnLabel'), phaseLabel: $('#phaseLabel'),
+    yourHome: $('#yourHome'), oppoHome: $('#oppoHome'), yourPlay: $('#yourPlay'), oppoPlay: $('#oppoPlay'),
+    mysteryArea: $('#mysteryArea'), handArea: $('#handArea'), logView: $('#logView'),
+    mustPlayNote: $('#mustPlayNote'), effectNote: $('#effectNote'),
+    btnCommit: $('#btnCommit'), btnCancel: $('#btnCancel'),
+    btnSwapK: $('#btnSwapK'), swapHandSelect: $('#swapHandSelect'), swapMysterySelect: $('#swapMysterySelect'),
+    btnLeave: $('#btnLeave'), btnRematch: $('#btnRematch')
+  };
+
+  // ---------- Room Model ----------
+  function newRoom(creatorName){
+    const deck = shuffle(makeDeck());
+    const handA = deck.slice(0,9);
+    const handB = deck.slice(9,18);
+    const mystery = deck.slice(18); // 2 cards
+    return {
+      createdAt: Date.now(), hostId: playerId,
+      players: { A: { id: playerId, name: creatorName || 'You' }, B: { id: null, name: null } },
+      dbVersion: 1, deckHash: Math.random().toString(36).slice(2),
+      turn: 1, phase: 'pick', // 'pick','resolved','done'
+      hands: { A: handA, B: handB }, home: { A: [], B: [] }, grave: { A: [], B: [] },
+      mystery: mystery, plays: { A: null, B: null }, mustPlay: { A: null, B: null },
+      pendingEight: null, kSwapWindow: null, winner: null, log: []
+    };
+  }
+
+  // ---------- Rendering ----------
+  function render(room){
+    cachedRoom = room;
+    el.roomCodeLabel.textContent = roomCode;
+    const you = room.players[youKey]; const oppoKey = youKey === 'A' ? 'B' : 'A'; const oppo = room.players[oppoKey];
+    el.youLabel.textContent = you?.name || '(未接続)';
+    el.oppoLabel.textContent = oppo?.name || '(未接続)';
+    el.turnLabel.textContent = room.turn; el.phaseLabel.textContent = room.phase;
+
+    drawCards(el.yourHome, room.home[youKey]);
+    drawCards(el.oppoHome, room.home[oppoKey]);
+
+    drawCards(el.yourPlay, room.plays[youKey] ? [room.plays[youKey].card] : []);
+    drawCards(el.oppoPlay, room.plays[oppoKey] ? [room.plays[oppoKey].card] : []);
+
+    drawCards(el.mysteryArea, room.mystery.map(()=>({back:true})));
+
+    const yourHand = room.hands[youKey];
+    drawHand(el.handArea, yourHand);
+
+    const mp = room.mustPlay[youKey];
+    el.mustPlayNote.textContent = mp ? `※ 次の出札は「${mp}」のみ可（8の効果）` : '';
+
+    el.effectNote.textContent = room.pendingEight
+      ? `次ターン：${room.pendingEight==='A'?'プレイヤーA':'プレイヤーB'}の「8」の効果で相手のカード指定`
+      : '';
+
+    const canCommit = selectedIndex !== null && room.phase === 'pick'
+      && (room.mustPlay[youKey] ? (yourHand[selectedIndex].r === room.mustPlay[youKey]) : true)
+      && !room.plays[youKey];
+    el.btnCommit.disabled = !canCommit;
+    el.btnCancel.disabled = selectedIndex === null;
+
+    const kTurn = room.kSwapWindow === youKey;
+    el.btnSwapK.disabled = !kTurn; el.swapHandSelect.disabled = !kTurn; el.swapMysterySelect.disabled = !kTurn;
+    buildSwapSelectors(room);
+
+    el.logView.innerHTML = room.log.map(line => `<div>${escapeHtml(line)}</div>`).join('');
+  }
+
+  function drawCards(container, cards){
+    container.innerHTML = '';
+    for(const c of cards){
+      const div = document.createElement('div');
+      div.className = 'card-item ' + (c.back ? 'back' : (cardColor(c.s)==='red'?'red':'black'));
+      div.textContent = c.back ? '' : `${c.s}${c.r}`;
+      container.appendChild(div);
+    }
+  }
+  function drawHand(container, hand){
+    container.innerHTML = '';
+    hand.forEach((c, idx)=>{
+      const div = document.createElement('div');
+      div.className = 'card-item ' + (cardColor(c.s)==='red'?'red':'black');
+      if(selectedIndex === idx) div.classList.add('selected');
+      div.innerHTML = `<span class="badge">${idx+1}</span>${c.s}${c.r}`;
+      div.addEventListener('click', ()=>{
+        if(cachedRoom.phase !== 'pick') return;
+        const mp = cachedRoom.mustPlay[youKey];
+        if(mp && c.r !== mp) return;
+        if(cachedRoom.plays[youKey]) return; // already committed
+        selectedIndex = (selectedIndex===idx ? null : idx);
+        render(cachedRoom);
+      });
+      container.appendChild(div);
+    });
+  }
+  function buildSwapSelectors(room){
+    const yourHand = room.hands[youKey];
+    el.swapHandSelect.innerHTML = yourHand.map((c,i)=>(`<option value="${i}">${i+1}: ${c.s}${c.r}</option>`)).join('');
+    el.swapMysterySelect.innerHTML = room.mystery.map((_,i)=>(`<option value="${i}">謎${i+1}</option>`)).join('');
+  }
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
+  }
+
+  // ---------- Game Resolution ----------
+  function resolveTurn(room){
+    const playA = room.plays.A; const playB = room.plays.B;
+    const cardA = playA.card; const cardB = playB.card;
+    room.kSwapWindow = null;
+
+    const aPlayed8 = cardA.r === '8'; const bPlayed8 = cardB.r === '8';
+    const aPlayedK = cardA.r === 'K'; const bPlayedK = cardB.r === 'K';
+
+    // Kの権利者を決める
+    let kOwner = null;
+    if(aPlayedK && bPlayedK){ kOwner = (Math.random()<0.5 ? 'A' : 'B'); room.log.push(`K同時：ランダムで${kOwner}がK効果の権利を得た（交換可能）。`); }
+    else if(aPlayedK){ kOwner = 'A'; } else if(bPlayedK){ kOwner = 'B'; }
+    if(kOwner){ room.kSwapWindow = kOwner; }
+
+    // 8の権利者
+    let eightOwner = null;
+    if(aPlayed8 && bPlayed8){ eightOwner = (Math.random()<0.5 ? 'A' : 'B'); room.log.push(`8同時：ランダムで${eightOwner}の8効果が有効（次ターンの相手カード指定）。`); }
+    else if(aPlayed8){ eightOwner = 'A'; } else if(bPlayed8){ eightOwner = 'B'; }
+
+    // 勝敗
+    const winner = decideWinner(cardA, cardB); room.winner = winner;
+    if(winner === 'draw'){
+      room.home.A.push(cardA); room.home.B.push(cardB);
+      room.log.push('引き分け：双方のカードを自陣に加えた。');
+    } else if(winner === 'A'){
+      room.home.A.push(cardA, cardB); room.grave.B.push(cardB);
+      room.log.push(`Aの勝ち：${cardToText(cardA)} vs ${cardToText(cardB)}。`);
+    } else if(winner === 'B'){
+      room.home.B.push(cardA, cardB); room.grave.A.push(cardA);
+      room.log.push(`Bの勝ち：${cardToText(cardB)} vs ${cardToText(cardA)}。`);
+    }
+
+    // 手札から削除
+    room.hands.A.splice(playA.handIndex, 1);
+    room.hands.B.splice(playB.handIndex, 1);
+
+    // 次ターン用の8
+    room.pendingEight = eightOwner;
+    room.plays.A = null; room.plays.B = null;
+
+    if(room.turn >= 9){
+      room.phase = 'done';
+      const aScore = room.home.A.length; const bScore = room.home.B.length;
+      const res = aScore === bScore ? 'draw' : (aScore > bScore ? 'A' : 'B');
+      room.log.push(`試合終了：A=${aScore}枚, B=${bScore}枚 → ${res==='draw'?'引き分け':res+'の勝利'}`);
+      return room;
+    }
+
+    room.phase = 'resolved'; room.turn += 1; return room;
+  }
+
+  function decideWinner(a, b){
+    if(a.r === 'Q' && b.r === 'K') return 'A';
+    if(b.r === 'Q' && a.r === 'K') return 'B';
+    if(a.r === '10' && cardColor(a.s) === cardColor(b.s)) return 'A';
+    if(b.r === '10' && cardColor(a.s) === cardColor(b.s)) return 'B';
+    const sum = RANK_VALUE[a.r] + RANK_VALUE[b.r];
+    if(a.r === '2' && sum >= 14) return 'A';
+    if(b.r === '2' && sum >= 14) return 'B';
+    const va = RANK_VALUE[a.r]; const vb = RANK_VALUE[b.r];
+    if(va === vb) return 'draw';
+    return va > vb ? 'A' : 'B';
+  }
+
+  // ---------- Phase transitions (host) ----------
+  async function afterResolutionIfHost(room){
+    if(room.kSwapWindow){ return; } // K交換待ち
+    if(room.pendingEight){
+      const owner = room.pendingEight; const target = owner === 'A' ? 'B' : 'A';
+      const forced = (owner==='A' ? (room.lastForceRankA || null) : (room.lastForceRankB || null));
+      if(forced){ room.mustPlay[target] = forced; room.log.push(`${owner}の8効果：次ターン、${target}は「${forced}」を出札指定。`); }
+      room.pendingEight = null; room.lastForceRankA = null; room.lastForceRankB = null;
+    }
+    room.phase = 'pick'; await dbSet(`/rooms/${roomCode}`, room);
+  }
+
+  // ---------- Events ----------
+  $('#btnCreateRoom').addEventListener('click', async ()=>{
+    const name = $('#creatorName').value.trim() || 'Host';
+    roomCode = String(Math.floor(100000 + Math.random()*900000));
+    isHost = true; youKey = 'A';
+    const room = newRoom(name);
+    await dbSet(`/rooms/${roomCode}`, room);
+    $('#createdRoomInfo').textContent = `部屋番号：${roomCode} を相手に共有してください。`;
+    enterGame(room); startPolling();
+  });
+
+  $('#btnJoinRoom').addEventListener('click', async ()=>{
+    const name = $('#joinerName').value.trim() || 'Guest';
+    const code = $('#roomCodeJoin').value.trim();
+    if(!code){ alert('部屋番号を入力してください'); return; }
+    roomCode = code;
+    const room = await dbGet(`/rooms/${roomCode}`);
+    if(!room){ alert('部屋が見つかりません'); return; }
+    if(room.players.B.id && room.players.B.id !== playerId){ alert('この部屋は満員です'); return; }
+    room.players.B.id = playerId; room.players.B.name = name;
+    await dbSet(`/rooms/${roomCode}`, room);
+    isHost = (room.hostId === playerId); youKey = 'B';
+    enterGame(room); startPolling();
+  });
+
+  function enterGame(room){ $('#lobby').classList.add('hidden'); $('#game').classList.remove('hidden'); render(room); }
+
+  async function startPolling(){
+    if(polling) return; polling = true; pollAbort = false;
+    while(!pollAbort){
+      try{
+        const room = await dbGet(`/rooms/${roomCode}`);
+        if(room){
+          render(room);
+          if(isHost){
+            if(room.phase === 'pick' && room.plays.A && room.plays.B){
+              const updated = resolveTurn(room); await dbSet(`/rooms/${roomCode}`, updated);
+            } else if(room.phase === 'resolved'){
+              if(!room.kSwapWindow){ await afterResolutionIfHost(room); }
+            }
+          }
+        }
+      }catch(e){ console.error(e); }
+      await sleep(1200);
+    }
+    polling = false;
+  }
+
+  $('#btnCommit').addEventListener('click', async ()=>{
+    if(selectedIndex === null) return;
+    const room = await dbGet(`/rooms/${roomCode}`);
+    if(!room || room.phase !== 'pick') return;
+    const hand = room.hands[youKey]; const c = hand[selectedIndex];
+    const playData = { handIndex: selectedIndex, card: c };
+
+    if(c.r === '8'){
+      const chosen = prompt('相手に指定するカード（2 / 8 / 10 / Q / K）を入力', 'Q');
+      const ok = ['2','8','10','Q','K'];
+      const forced = ok.includes(chosen||'') ? chosen : 'Q';
+      if(youKey==='A') room.lastForceRankA = forced; else room.lastForceRankB = forced;
+      room.log.push(`${youKey}は8を出し、次ターンの指定候補に「${forced}」を選択。`);
+    }
+
+    room.plays[youKey] = playData; await dbSet(`/rooms/${roomCode}`, room); selectedIndex = null;
+  });
+
+  $('#btnCancel').addEventListener('click', ()=>{ selectedIndex = null; if(cachedRoom) render(cachedRoom); });
+
+  $('#btnSwapK').addEventListener('click', async ()=>{
+    const room = await dbGet(`/rooms/${roomCode}`);
+    if(!room || room.phase !== 'resolved' || room.kSwapWindow !== youKey) return;
+    const hi = parseInt($('#swapHandSelect').value,10);
+    const mi = parseInt($('#swapMysterySelect').value,10);
+    if(isNaN(hi) || isNaN(mi)) return;
+    const tmp = room.hands[youKey][hi]; room.hands[youKey][hi] = room.mystery[mi]; room.mystery[mi] = tmp;
+    room.log.push(`${youKey}がK効果で手札とミステリーを交換。`);
+    room.kSwapWindow = null; await dbSet(`/rooms/${roomCode}`, room);
+  });
+
+  $('#btnLeave').addEventListener('click', async ()=>{
+    if(roomCode){
+      try{
+        const room = await dbGet(`/rooms/${roomCode}`);
+        if(room){ if(youKey==='A'){ room.players.A.id = null; room.players.A.name = null; } else { room.players.B.id = null; room.players.B.name = null; } await dbSet(`/rooms/${roomCode}`, room); }
+      }catch(_){}
+    }
+    pollAbort = true; location.reload();
+  });
+
+  $('#btnRematch').addEventListener('click', async ()=>{
+    const room = await dbGet(`/rooms/${roomCode}`);
+    if(!room || room.phase !== 'done') return;
+    if(!isHost){ alert('ホストのみが再戦を開始できます'); return; }
+    const nameA = room.players.A.name || 'A'; const nameB = room.players.B.name || 'B';
+    const fresh = newRoom(nameA); fresh.players.B.id = room.players.B.id; fresh.players.B.name = nameB;
+    await dbSet(`/rooms/${roomCode}`, fresh);
+  });
+
+  window.addEventListener('beforeunload', ()=>{ pollAbort = true; });
+
+  </script>
+</body>
+</html>
