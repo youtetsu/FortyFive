@@ -462,26 +462,40 @@
   function enterGame(room){ $('#lobby').classList.add('hidden'); $('#game').classList.remove('hidden'); render(room); }
 
   async function startPolling(){
-    if(polling) return; polling = true; pollAbort = false;
-    while(!pollAbort){
-      try{
-        const room = await dbGet(`/rooms/${roomCode}`);
-        if(room){
-          render(room);
-          if(isHost){
-            if(room.phase === 'pick' && room.plays.A && room.plays.B){
-              const updated = resolveTurn(room); await dbSet(`/rooms/${roomCode}`, updated);
-            } else if(room.phase === 'resolved'){
-              if(!room.kSwapWindow){ await afterResolutionIfHost(room); }
+  if(polling) return; 
+  polling = true; 
+  pollAbort = false;
+  
+  while(!pollAbort){
+    try{
+      const room = await dbGet(`/rooms/${roomCode}`);
+      if(room){
+        render(room);
+        if(isHost){
+          if(room.phase === 'pick' && room.plays.A && room.plays.B){
+            // 競合防止：処理中フラグを先に設定
+            room.phase = 'resolving';
+            await dbSet(`/rooms/${roomCode}`, room);
+            
+            const updated = resolveTurn(room); 
+            await dbSet(`/rooms/${roomCode}`, updated);
+          } else if(room.phase === 'resolved'){
+            if(!room.kSwapWindow){ 
+              await afterResolutionIfHost(room); 
             }
           }
         }
-      }catch(e){ console.error(e); }
-      await sleep(1200);
+      }
+    }catch(e){ 
+      console.error(e); 
+      // エラー時は長めに待つ
+      await sleep(5000);
+      continue;
     }
-    polling = false;
+    await sleep(1200);
   }
-
+  polling = false;
+}
   $('#btnCommit').addEventListener('click', async ()=>{
     if(selectedIndex === null) return;
     const room = await dbGet(`/rooms/${roomCode}`);
