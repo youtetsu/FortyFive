@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Forty Five - 2人オンライン（単一HTML・安定化修正版）</title>
+  <title>Forty Five - 2人オンライン（単一HTML・安定化＆8短期化修正版）</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', sans-serif; background: #0f172a; color: #e2e8f0; }
@@ -179,12 +179,10 @@
   <script>
   // ─────────────────────────────────────────────
   // Forty Five - 2人オンライン（単一HTML / 外部JSなし）
-  // 修正点：
-  //  - render() 内で room.home[youKey] が未定義の場合にクラッシュしていたのを防御
-  //  - 欠損スキーマを安全に既定値へフォールバック（home/hands/plays/mustPlay など）
-  //  - DBエラー（Permission denied 等）の表示を追加
-  //  - 終了後リマッチボタンの活性制御
-  //  - 簡易セルフテストを追加（純関数の判定）
+  // 追加修正点：
+  //  - 未定義room.logでの push クラッシュを解消（resolveTurn/afterResolutionIfHost 冒頭で安全化）
+  //  - 8の指定は「次のターンのみ」→ 該当ターンの決着後に mustPlay を自動クリア
+  //  - 既存の防御レンダリング・ログ・セルフテストは維持
   // ─────────────────────────────────────────────
 
   // ★★★ ここはあなたの Firebase Realtime Database の URL に合わせて設定 ★★★
@@ -278,6 +276,7 @@
   function safeGrave(g){ return (g && Array.isArray(g.A) && Array.isArray(g.B)) ? g : { A: asArray(g?.A), B: asArray(g?.B) }; }
   function safePlays(p){ return (p && (p.A===null || isObj(p.A) || Array.isArray(p.A)===false) && (p.B===null || isObj(p.B) || Array.isArray(p.B)===false)) ? p : { A: null, B: null }; }
   function safeMustPlay(m){ return (m && ('A' in m) && ('B' in m)) ? m : { A: null, B: null }; }
+  function safeLog(l){ return Array.isArray(l) ? l : []; }
 
   // ---------- Rendering ----------
   function render(room){
@@ -391,13 +390,17 @@
   }
 
   function escapeHtml(str){
-    return String(str).replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
+    return String(str).replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[s]));
   }
 
   // ---------- Game Resolution ----------
   function resolveTurn(room){
     const playA = room.plays?.A; const playB = room.plays?.B;
     if(!playA || !playB){ return room; }
+
+    // まずログの安全化（未定義 push クラッシュ対策）
+    room.log = safeLog(room.log);
+
     const cardA = playA.card; const cardB = playB.card;
     room.kSwapWindow = null;
 
@@ -441,6 +444,10 @@
     room.pendingEight = eightOwner;
     room.plays = { A: null, B: null };
 
+    // ▼ 8の指定は「次のターンのみ」→ 今ターンの解決が終わったら mustPlay を必ず解除
+    room.mustPlay = safeMustPlay(room.mustPlay);
+    room.mustPlay.A = null; room.mustPlay.B = null;
+
     if(room.turn >= 9){
       room.phase = 'done';
       const aScore = room.home.A.length; const bScore = room.home.B.length;
@@ -468,6 +475,10 @@
   // ---------- Phase transitions (host) ----------
   async function afterResolutionIfHost(room){
     if(room.kSwapWindow){ return; } // K交換待ち
+
+    // ログの安全化
+    room.log = safeLog(room.log);
+
     if(room.pendingEight){
       const owner = room.pendingEight; const target = owner === 'A' ? 'B' : 'A';
       const forced = (owner==='A' ? (room.lastForceRankA || null) : (room.lastForceRankB || null));
@@ -549,7 +560,7 @@
       const ok = ['2','8','10','Q','K'];
       const forced = ok.includes((chosen||'').toUpperCase()) ? (chosen||'').toUpperCase() : 'Q';
       if(youKey==='A') room.lastForceRankA = forced; else room.lastForceRankB = forced;
-      room.log = Array.isArray(room.log) ? room.log : [];
+      room.log = safeLog(room.log);
       room.log.push(`${youKey}は8を出し、次ターンの指定候補に「${forced}」を選択。`);
     }
 
@@ -571,7 +582,7 @@
     room.mystery = asArray(room.mystery);
     if(!room.hands[youKey][hi] || !room.mystery[mi]) return;
     const tmp = room.hands[youKey][hi]; room.hands[youKey][hi] = room.mystery[mi]; room.mystery[mi] = tmp;
-    room.log = Array.isArray(room.log) ? room.log : [];
+    room.log = safeLog(room.log);
     room.log.push(`${youKey}がK効果で手札とミステリーを交換。`);
     room.kSwapWindow = null;
     await dbSet(`/rooms/${roomCode}`, room);
@@ -615,11 +626,20 @@
       ok('同値は引き分け (8♥ vs 8♣ → draw)', decideWinner({r:'8',s:'\u2665'}, {r:'8',s:'\u2663'}) === 'draw');
 
       // render defensive (home欠損の部屋でも落ちない)
-      const tmpDiv = document.createElement('div');
       youKey = 'A';
       const mockRoom = { players:{A:{name:'A'},B:{name:'B'}}, turn:1, phase:'pick', hands:{A:[],B:[]}, home: undefined, grave:{A:[],B:[]}, plays:{A:null,B:null}, mystery:[], mustPlay:{A:null,B:null}, log:[] };
       render(mockRoom); // 例外が出ないことを確認
       ok('renderはhome欠損でもクラッシュしない', true);
+
+      // ▼ 新規テスト：log未定義でもresolveTurnが例外を出さない
+      const roomNoLog = { turn:1, phase:'pick', hands:{A:[{r:'Q',s:'\u2660'}], B:[{r:'K',s:'\u2665'}]}, home:{A:[],B:[]}, grave:{A:[],B:[]}, plays:{A:{handIndex:0,card:{r:'Q',s:'\u2660'}}, B:{handIndex:0,card:{r:'K',s:'\u2665'}}}, mystery:[] };
+      try { resolveTurn(roomNoLog); ok('resolveTurn: room.log未定義でクラッシュしない', true); } catch(e){ ok('resolveTurn: room.log未定義でクラッシュしない', false); }
+
+      // ▼ 新規テスト：8の mustPlay は次のターンのみ
+      const roomMust = { turn:1, phase:'pick', hands:{A:[{r:'8',s:'\u2660'}], B:[{r:'Q',s:'\u2665'}]}, home:{A:[],B:[]}, grave:{A:[],B:[]}, plays:{A:{handIndex:0,card:{r:'8',s:'\u2660'}}, B:{handIndex:0,card:{r:'Q',s:'\u2665'}}}, mustPlay:{A:null,B:'Q'}, log:[], mystery:[], lastForceRankA:'Q' };
+      const after = resolveTurn(roomMust);
+      ok('resolve後にmustPlayがクリアされる(A/Bともnull)', after.mustPlay.A===null && after.mustPlay.B===null);
+
     } catch (e){
       out.push('❌ テスト中に例外: ' + e.message);
     }
